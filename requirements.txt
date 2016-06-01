@@ -1,0 +1,7 @@
+setuptools
+numpy
+matplotlib
+IPython
+seaborn
+colorlover
+webcolors
