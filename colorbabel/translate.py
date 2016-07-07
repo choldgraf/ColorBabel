@@ -6,7 +6,6 @@ from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 import numpy as np
 import matplotlib.pyplot as plt
 import colorlover as cl
-import webcolors as wb
 
 __all__ = ['ColorTranslator']
 
@@ -57,12 +56,11 @@ class ColorTranslator(object):
                     pass
                 else:
                     # Try to convert with webcolors
-                    colors = np.array([wb.name_to_rgb(i) for i in colors])
-                    colors = colors / 255.
+                    colors = _names_to_rgb(colors)
             colors = pl.blend_palette(colors, as_cmap=True)
         self.cmap = colors
 
-    def to_numeric(self, n_bins=100, kind='rgb'):
+    def to_numeric(self, n_bins=255, kind='rgb'):
         """Convert colormap to numeric array.
 
         Parameters
@@ -88,7 +86,7 @@ class ColorTranslator(object):
             raise ValueError("kind {} not supported".format(kind))
         return colors_numeric
 
-    def to_strings(self, n_bins=100, kind='rgb'):
+    def to_strings(self, n_bins=255, kind='rgb'):
         """Convert colormap to plotly-style strings.
 
         Parameters
@@ -121,16 +119,28 @@ class ColorTranslator(object):
                 colors_string = cl.to_hsl(list_of_tups)
         return colors_string
 
-    def to_diverging(self, as_cmap=True, center='light', **kwargs):
+    def to_diverging(self, center='light', mid_spread=.4, log_amt=1e-3,
+                     as_cmap=True, **kwargs):
         """Convert diverging colormap from first/last color in self.
 
         Parameters
         ----------
+        center : array, string
+            The color of the new center value for the cmap. If a string,
+            must be one of ['light', 'dark']. If an array, must be RGB
+            of length 3, values between 0 and 1.
+        mid_spread : float between 0 and 1
+            The amount of spread for the middle color. Values closer to 1
+            will cause the middle color to take up a larger part of the
+            resulting colormap.
+        log_amt : float
+            The middle color drops off logarithmically. This defines how
+            quickly this happens. Larger numbers cause this to drop faster
+            and 1 means that the dropoff is immediate. Reccomended between
+            1e-3 and 1e-1.
         as_cmap : bool
             Whether to return the diverging map as a list of colors
             or a LinearSegmentedColormap
-        center : 'light' | 'dark'
-            Whether the center color is dark or light.
 
         Returns
         -------
@@ -138,13 +148,9 @@ class ColorTranslator(object):
             The diverging colormap, created by interpolating between
             the first and last colors in self.cmap.
         """
-        colors_rgb = self.cmap([0., 1.])
-        colors_husl = [pl.husl.rgb_to_husl(r, g, b)[0]
-                       for r, g, b, a in colors_rgb]
-        colors_div = pl.diverging_palette(colors_husl[0], colors_husl[1],
-                                          center=center, **kwargs)
-        colors_div = pl.blend_palette(colors_div, as_cmap=as_cmap)
-        return colors_div
+        out = _add_middle_color(self.to_numeric(), midpoint=center,
+                                mid_spread=mid_spread, log_amt=log_amt)
+        return pl.blend_palette(out, as_cmap=as_cmap)
 
     def show_colors(self, n_bins=None):
         """Display the colors in self.cmap.
@@ -221,10 +227,73 @@ class ColorTranslator(object):
         return arr
 
 
+def _add_middle_color(colors, midpoint, mid_spread=.3, log_amt=1e-3):
+    """Converts the center of a colormap to a particular color."""
+    mid_strings = dict(light=(.95, .95, .95),
+                       dark=(.133, .133, .133))
+    if isinstance(midpoint, str):
+        if midpoint not in mid_strings.keys():
+            raise ValueError('If midpoint is a string, must be'
+                             ' one of %s' % mid_strings.keys())
+        midpoint = mid_strings[midpoint]
+    if len(midpoint) != 3:
+        raise ValueError('Midpoint must be a tuple/list of length 3')
+    if colors.ndim != 2:
+        raise ValueError('Input colors must be 2d')
+    if any([mid_spread <= 0, mid_spread >= 1]):
+        raise ValueError('mid_spread must be between 0 and 1')
+
+    # Find middle index
+    ix_mid = colors.shape[0] / 2
+    n_mid_colors = int(colors.shape[0] * (mid_spread / 2.))
+
+    # Get colors associated w/ the middle bounds
+    num_col_hi = colors[ix_mid + n_mid_colors, :3]
+    num_col_lo = colors[ix_mid - n_mid_colors, :3]
+
+    # Iterate through colors and add the midpoitn to middle indices
+    col_adds = []
+    for col_side in [num_col_lo, num_col_hi]:
+        # Iterate through rgb
+        this_side = []
+        for colmid, colend in zip(midpoint, col_side):
+            if col_side is num_col_hi:
+                lins = np.linspace(colmid, colend, n_mid_colors)
+            else:
+                lins = np.linspace(colend, colmid, n_mid_colors)
+            this_side.append(lins)
+        this_side = np.vstack(this_side)
+        col_adds.append(this_side)
+    col_adds = np.hstack(col_adds).T
+
+    # Now overwrite the old colors
+    weights = np.logspace(np.log10(log_amt), np.log10(1), n_mid_colors)
+    weights = np.hstack([weights[::-1], weights])
+    col_out = colors.copy()
+    col_replace = col_out[ix_mid - n_mid_colors: ix_mid + n_mid_colors, :3]
+
+    col_zip = zip(col_replace, col_adds, weights)
+    colors_new = np.zeros([len(col_replace), 3])
+    for i, (cold, cnew, cweight) in enumerate(col_zip):
+        colors_new[i] = np.average([cold, cnew], axis=0,
+                                   weights=[cweight, 1-cweight])
+
+    col_out[ix_mid - n_mid_colors: ix_mid + n_mid_colors, :3] = colors_new
+    return col_out
+
+
+# Color auto-names
+def _names_to_rgb(names):
+    import webcolors as wb
+    rgb = np.array([wb.name_to_rgb(i) for i in names])
+    return rgb / 255.
+
+
 def _closest_color_from_rgb(rgb):
     """Pulled from http://stackoverflow.com/questions/9694165/
     convert-rgb-color-to-english-color-name-like-green
     """
+    import webcolors as wb
     min_colors = {}
     for key, name in wb.css3_hex_to_names.items():
         base_color = np.asarray(wb.hex_to_rgb(key))
@@ -234,6 +303,8 @@ def _closest_color_from_rgb(rgb):
 
 
 def _get_color_names(array):
+    """Use webcolors to get the closest named color for rgb values"""
+    import webcolors as wb
     array = np.atleast_2d(array)
     color_names = []
     for rgb in array:
