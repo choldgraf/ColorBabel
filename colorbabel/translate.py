@@ -107,7 +107,7 @@ class ColorTranslator(object):
         # Remove the alpha
         array = self.cmap(np.linspace(0, 1, n_bins))[:, :-1]
         if kind == 'hex':
-            colors_string = [pl.husl.rgb_to_hex(i) for i in array]
+            colors_string = [pl.husl.rgb_to_hex(ii) for ii in array]
         elif kind == 'name':
             colors_string = _get_color_names(array * 255.)
         else:
@@ -244,7 +244,7 @@ def _add_middle_color(colors, midpoint, mid_spread=.3, log_amt=1e-3):
         raise ValueError('mid_spread must be between 0 and 1')
 
     # Find middle index
-    ix_mid = colors.shape[0] / 2
+    ix_mid = int(colors.shape[0] / 2)
     n_mid_colors = int(colors.shape[0] * (mid_spread / 2.))
 
     # Get colors associated w/ the middle bounds
@@ -299,7 +299,7 @@ def _closest_color_from_rgb(rgb):
         base_color = np.asarray(wb.hex_to_rgb(key))
         diff = base_color - np.asarray(rgb)
         min_colors[np.sum(diff ** 2)] = name
-    return min_colors[np.min(min_colors.keys())]
+    return min_colors[np.min(list(min_colors.keys()))]
 
 
 def _get_color_names(array):
